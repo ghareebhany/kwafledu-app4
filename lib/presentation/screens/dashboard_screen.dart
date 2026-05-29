@@ -237,21 +237,23 @@ class DashboardScreen extends ConsumerWidget {
     );
   }
 
-  Future<bool?> _confirmLogout(BuildContext context) => showDialog<bool>(
-        context: context,
-        builder: (_) => AlertDialog(
-          title: const Text('تسجيل الخروج'),
-          content: const Text('هل تريد تسجيل الخروج؟'),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('إلغاء')),
-            FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('خروج')),
-          ],
-        ),
-      );
+Future<bool?> _confirmLogout(BuildContext context) => showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('تسجيل الخروج'),
+        content: const Text('هل تريد تسجيل الخروج؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('خروج'),
+          ),
+        ],
+      ),
+    );
 }
 
 // ── بطاقة إحصاء ───────────────────────────────────────────────────────────────
