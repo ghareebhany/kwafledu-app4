@@ -5,7 +5,8 @@ import '../../core/constants/api_constants.dart';
 import '../../core/utils/secure_storage.dart';
 
 /// عرض الدروس النصية / PDF / واجبات في WebView
-/// يدعم: اعتراض روابط واتساب + إرسال المشاهدة عند الخروج (tvvl)
+/// يستخدم نمط ?app=1&token=JWT حتى يعمل app_mode_init ويُحقن __tvvl_app_token
+/// تلقائياً، فيتولى tvvl-frontend.js تسجيل المشاهدة عند الخروج بدون تدخل Dart.
 class LessonWebScreen extends StatefulWidget {
   final int lessonId;
   final String title;
@@ -29,30 +30,25 @@ class _LessonWebScreenState extends State<LessonWebScreen> {
 
   Future<void> _load() async {
     final token = await SecureStorageService.instance.getToken() ?? '';
-    final url   = ApiConstants.lessonViewUrl(widget.lessonId);
+
+    // بناء رابط الدرس بنمط ?app=1&token=JWT بدل Authorization header.
+    // app_mode_init() يستقبله، يُسجّل المستخدم، ويحقن __tvvl_app_token
+    // في الصفحة — فيعمل tvvl-frontend.js بشكل مستقل ويتولى:
+    //   • checkViewLimit() عند فتح الصفحة
+    //   • register-view عند beforeunload / pagehide / visibilitychange
+    final lessonPageUrl = ApiConstants.lessonViewUrl(widget.lessonId);
+    final encodedToken  = Uri.encodeComponent(token);
+    final separator     = lessonPageUrl.contains('?') ? '&' : '?';
+    final url           = '$lessonPageUrl${separator}app=1&token=$encodedToken';
 
     final ctrl = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(NavigationDelegate(
         onPageFinished: (_) {
           if (mounted) setState(() => _loading = false);
-          // إرسال المشاهدة عند مغادرة الصفحة (مزامنة tvvl)
+          // اعتراض نقرات واتساب فقط — تسجيل المشاهدة يتولاه tvvl-frontend.js
           _ctrl?.runJavaScript(
             '(function(){'
-            '  function sendView(){'
-            '    if(window.__tvvlSent) return; window.__tvvlSent=true;'
-            '    var lid = (typeof TVVL!=="undefined" && TVVL.lesson_id) ? TVVL.lesson_id : 0;'
-            '    if(!lid) return;'
-            '    var base = typeof TVVL!=="undefined" && TVVL.rest_url ? TVVL.rest_url : "/wp-json/";'
-            '    var hdrs = {"Content-Type":"application/json"};'
-            '    if(window.__tvvl_app_token) hdrs["Authorization"]="Bearer "+window.__tvvl_app_token;'
-            '    if(typeof TVVL!=="undefined" && TVVL.rest_nonce) hdrs["X-WP-Nonce"]=TVVL.rest_nonce;'
-            '    fetch(base+"tvvl/v1/register-view",{method:"POST",keepalive:true,headers:hdrs,body:JSON.stringify({lesson_id:parseInt(lid)})});'
-            '  }'
-            '  window.addEventListener("beforeunload",sendView);'
-            '  window.addEventListener("pagehide",sendView);'
-            '  document.addEventListener("visibilitychange",function(){ if(document.visibilityState==="hidden") sendView(); });'
-            // اعتراض نقرات واتساب
             '  document.addEventListener("click",function(e){'
             '    var el=e.target.closest?e.target.closest("a[href]"):null;'
             '    if(!el) return;'
@@ -107,8 +103,7 @@ class _LessonWebScreenState extends State<LessonWebScreen> {
       ..addJavaScriptChannel('VideoEvents', onMessageReceived: (_) {})
       ..addJavaScriptChannel('WaChannel',
           onMessageReceived: (msg) => _onWaLink(msg.message))
-      ..loadRequest(Uri.parse(url),
-          headers: {'Authorization': 'Bearer $token'});
+      ..loadRequest(Uri.parse(url));  // بدون Authorization header — التوكن في الـ URL
 
     setState(() => _ctrl = ctrl);
   }
