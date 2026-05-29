@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:dio/dio.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
@@ -37,7 +36,6 @@ class _WebViewLessonScreenState extends ConsumerState<WebViewLessonScreen> {
   bool _hasError         = false;
   bool _completionFired  = false;
   int? _currentLessonId;        // لتتبع الدرس الحالي عند التبديل
-  bool _viewRegistered   = false; // هل سُجِّلت المشاهدة للدرس الحالي؟
 
   @override
   void initState() {
@@ -49,25 +47,24 @@ class _WebViewLessonScreenState extends ConsumerState<WebViewLessonScreen> {
 
   @override
   void dispose() {
-    // سجّل المشاهدة عند إغلاق الشاشة نهائياً
-    _sendViewToServer(_currentLessonId);
+    // تسجيل المشاهدة يتم بالكامل من JS (beforeunload / visibilitychange / pagehide)
+    // عبر fetch keepalive → /tvvl/v1/register-view، بدون تدخل من Dart لتجنب التسجيل المزدوج.
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     super.dispose();
   }
 
   // ─────────────────────────────────────────────────────────────────────────
   // تحميل الدرس
-  // الحل الصحيح: نُمرّر JWT كـ ?token=JWT في الـ URL نفسه بدل Authorization header.
-  // app_player.php يقرأ التوكن من query string ويُسجّل المستخدم بـ wp_set_current_user()
-  // فتعمل جميع sub-requests (CSS/JS/iframe) بنفس الجلسة بدون حاجة لـ headers.
+  // التوكن يُمرَّر كـ ?token=JWT في الـ URL — app_player.php يقرأه ويُسجّل
+  // المستخدم بـ wp_set_current_user() ويحقن __tvvl_app_token في الصفحة.
+  // تسجيل المشاهدة يتم حصراً من tvvl-frontend.js عبر fetch keepalive
+  // عند beforeunload / pagehide / visibilitychange لمنع التسجيل المزدوج.
   // ─────────────────────────────────────────────────────────────────────────
   Future<void> _loadLesson(Lesson lesson) async {
-    // سجّل مشاهدة الدرس السابق قبل الانتقال للجديد
-    if (_currentLessonId != null && _currentLessonId != lesson.id) {
-      _sendViewToServer(_currentLessonId);
-    }
+    // الانتقال بين الدروس: JS يُرسل المشاهدة للدرس السابق تلقائياً
+    // عبر visibilitychange/beforeunload قبل تحميل الصفحة الجديدة.
+    // لا حاجة لاستدعاء Dart هنا — يُسبّب تسجيلاً مزدوجاً.
     _currentLessonId = lesson.id;
-    _viewRegistered  = false;
 
     setState(() {
       _loading         = true;
@@ -227,38 +224,6 @@ class _WebViewLessonScreenState extends ConsumerState<WebViewLessonScreen> {
 
     // Fallback: rewrite rule /app-player/{lesson_id}/?app=1&token=
     return ApiConstants.appPlayerUrl(lesson.id, token);
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // أحداث الفيديو من Plyr عبر JavaScript channel
-  // ─────────────────────────────────────────────────────────────────────────
-  // اعتراض روابط واتساب من JavaScript وفتحها في المتصفح الخارجي
-  // ── إرسال المشاهدة لـ tvvl من Dart مباشرة (موثوق أكثر من JS events) ──────
-  Future<void> _sendViewToServer(int? lessonId) async {
-    if (lessonId == null || _viewRegistered) return;
-    _viewRegistered = true;
-
-    try {
-      final token = await SecureStorageService.instance.getToken() ?? '';
-      if (token.isEmpty) return;
-
-      // استخرج سيت URL من API base
-      final baseUrl = ApiConstants.baseUrl
-          .replaceAll('/wp-json/app/v1/', '')
-          .replaceAll('/wp-json/', '');
-      final endpoint = '$baseUrl/wp-json/tvvl/v1/register-view';
-
-      await Dio().post(
-        endpoint,
-        data: {'lesson_id': lessonId},
-        options: Options(headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        }),
-      );
-    } catch (_) {
-      // نتجاهل الخطأ — الإضافة تتعامل مع الحد عند الفتح التالي
-    }
   }
 
   void _onWaLink(JavaScriptMessage msg) {
